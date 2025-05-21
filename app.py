@@ -1,289 +1,261 @@
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
-from dotenv import load_dotenv
+from dotenv  import load_dotenv
 from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
-import os
-import requests
-import datetime
+import os, requests, datetime, re, io, tempfile
 from functools import wraps
 from datetime import timedelta
-import re
-import io
 from docx import Document
 from docx.enum.text import WD_COLOR_INDEX
+import fitz  # PyMuPDF
 
-# Load environment variables
+# ─── ENV / AZURE CONFIG ────────────────────────────────────────────────────────
 load_dotenv()
-
-# Configuration
-SEARCH_SERVICE_NAME = os.getenv("SEARCH_SERVICE_NAME")
-SEARCH_INDEX_NAME = os.getenv("SEARCH_INDEX_NAME")
-API_KEY = os.getenv("API_KEY")
-API_VERSION = os.getenv("API_VERSION")
+SEARCH_SERVICE_NAME             = os.getenv("SEARCH_SERVICE_NAME")
+SEARCH_INDEX_NAME               = os.getenv("SEARCH_INDEX_NAME")
+API_KEY                         = os.getenv("API_KEY")
+API_VERSION                     = os.getenv("API_VERSION")
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
-CONTAINER_NAME = os.getenv("CONTAINER_NAME")
-ACCOUNT_KEY = os.getenv("ACCOUNT_KEY")
+CONTAINER_NAME                  = os.getenv("CONTAINER_NAME")
+ACCOUNT_KEY                     = os.getenv("ACCOUNT_KEY")
 
+AZURE_ENDPOINT = (
+    f"https://{SEARCH_SERVICE_NAME}.search.windows.net/"
+    f"indexes/{SEARCH_INDEX_NAME}/docs/search?api-version={API_VERSION}"
+)
+
+# ─── FLASK SETUP ───────────────────────────────────────────────────────────────
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", os.urandom(24))
 app.permanent_session_lifetime = timedelta(minutes=30)
 
-blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
+blob_service_client = BlobServiceClient.from_connection_string(
+    AZURE_STORAGE_CONNECTION_STRING
+)
 container_client = blob_service_client.get_container_client(CONTAINER_NAME)
 
 @app.before_request
-def make_session_permanent():
-    session.permanent = True
+def keep_session(): session.permanent = True
 
-# User login credentials
-# Load user credentials from environment
 VALID_CREDENTIALS = {
     os.getenv("ADMIN_USERNAME"): os.getenv("ADMIN_PASSWORD"),
-    os.getenv("USER1_USERNAME"): os.getenv("USER1_PASSWORD"),
-    os.getenv("USER2_USERNAME"): os.getenv("USER2_PASSWORD")
+    os.getenv("USER1_USERNAME") : os.getenv("USER1_PASSWORD"),
+    os.getenv("USER2_USERNAME") : os.getenv("USER2_PASSWORD"),
 }
 
+# ─── HELPERS ───────────────────────────────────────────────────────────────────
+def login_required(fn):
+    @wraps(fn)
+    def inner(*a, **kw):
+        if "username" not in session:
+            return redirect(url_for("login"))
+        return fn(*a, **kw)
+    return inner
 
-endpoint = f"https://{SEARCH_SERVICE_NAME}.search.windows.net/indexes/{SEARCH_INDEX_NAME}/docs/search?api-version={API_VERSION}"
+def palette(i):
+    colors = ["#FFFF00","#40E0D0","#FFC0CB","#90EE90",
+              "#98FB98","#ADD8E6","#FFB6C1","#EE82EE"]
+    return colors[i % len(colors)]
 
-def login_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'username' not in session:
-            return redirect(url_for('login'))
-        return f(*args, **kwargs)
-    return decorated_function
-
-def highlight_keywords(text, keywords):
-    """Wrap keywords with <mark> tags using different colors."""
-    if not text:
-        return ""
-    
-    # Define colors for highlighting
-    colors = [
-        'background-color: #FFFF00;',  # Yellow
-        'background-color: #40E0D0;',  # Turquoise
-        'background-color: #FFC0CB;',  # Pink
-        'background-color: #90EE90;',  # Green
-        'background-color: #98FB98;',  # Bright Green
-        'background-color: #ADD8E6;',  # Blue
-        'background-color: #FFB6C1;',  # Red
-        'background-color: #EE82EE;'   # Violet
-    ]
-    
-    # Create a mapping of keywords to colors
-    keyword_colors = {}
-    for i, keyword in enumerate(keywords.split()):
-        keyword_colors[keyword.lower()] = colors[i % len(colors)]
-    
-    # Process each keyword
-    for keyword, color in keyword_colors.items():
-        pattern = re.compile(re.escape(keyword), re.IGNORECASE)
-        text = pattern.sub(lambda m: f'<mark style="{color}">{m.group(0)}</mark>', text)
-    
+def highlight_text(text, query):
+    if not text: return ""
+    for i, word in enumerate(query.split()):
+        text = re.sub(fr"({re.escape(word)})",
+                      rf'<mark style="background:{palette(i)};">\1</mark>',
+                      text, flags=re.I)
     return text
 
-def highlight_keywords_in_docx(blob_client, keywords):
-    """Process DOCX file and highlight keywords with different colors."""
+def highlight_docx(blob_client, query):
     try:
-        # Download the blob content
-        blob_data = blob_client.download_blob()
-        docx_bytes = blob_data.readall()
-        
-        # Create a Document object from bytes
-        doc = Document(io.BytesIO(docx_bytes))
-        
-        # Define colors for highlighting
-        highlight_colors = [
-            WD_COLOR_INDEX.YELLOW,      # Yellow
-            WD_COLOR_INDEX.TURQUOISE,   # Turquoise
-            WD_COLOR_INDEX.PINK,        # Pink
-            WD_COLOR_INDEX.GREEN,       # Green
-            WD_COLOR_INDEX.BRIGHT_GREEN,# Bright Green
-            WD_COLOR_INDEX.BLUE,        # Blue
-            WD_COLOR_INDEX.RED,         # Red
-            WD_COLOR_INDEX.VIOLET       # Violet
-        ]
-        
-        # Create a mapping of keywords to colors
-        keyword_colors = {}
-        for i, keyword in enumerate(keywords.split()):
-            keyword_colors[keyword.lower()] = highlight_colors[i % len(highlight_colors)]
-        
-        # Process each paragraph
-        for paragraph in doc.paragraphs:
-            for run in paragraph.runs:
-                text = run.text
-                modified_text = text
-                
-                # Process each keyword
-                for keyword, color in keyword_colors.items():
-                    pattern = re.compile(re.escape(keyword), re.IGNORECASE)
-                    if pattern.search(modified_text):
-                        # Split text by this keyword
-                        parts = pattern.split(modified_text)
-                        if len(parts) > 1:
-                            # Clear the original run
-                            run.text = parts[0]
-                            
-                            # Add highlighted runs for this keyword
-                            for i, part in enumerate(parts[1:]):
-                                # Add the keyword with its specific color
-                                keyword_run = paragraph.add_run(pattern.findall(modified_text)[i])
-                                keyword_run.font.highlight_color = color
-                                
-                                # Add the next part
-                                if i < len(parts) - 2:
-                                    paragraph.add_run(part)
-                            
-                            # Update modified_text for next keyword
-                            modified_text = pattern.sub('', modified_text)
-        
-        # Save the modified document
-        output = io.BytesIO()
-        doc.save(output)
-        output.seek(0)
-        
-        return output.getvalue()
+        doc = Document(io.BytesIO(blob_client.download_blob().readall()))
+        wcol = [WD_COLOR_INDEX.YELLOW, WD_COLOR_INDEX.TURQUOISE, WD_COLOR_INDEX.PINK,
+                WD_COLOR_INDEX.GREEN, WD_COLOR_INDEX.BRIGHT_GREEN, WD_COLOR_INDEX.BLUE,
+                WD_COLOR_INDEX.RED, WD_COLOR_INDEX.VIOLET]
+        cmap = {w.lower(): wcol[i % len(wcol)] for i,w in enumerate(query.split())}
+        for p in doc.paragraphs:
+            for r in p.runs:
+                for w,c in cmap.items():
+                    if re.search(re.escape(w), r.text, re.I):
+                        r.font.highlight_color = c
+        buf = io.BytesIO(); doc.save(buf); buf.seek(0)
+        return buf.getvalue()
     except Exception as e:
-        app.logger.error(f"Error processing DOCX file: {str(e)}")
+        app.logger.error(f"DOCX highlight error: {e}")
         return None
 
-@app.route('/login', methods=['GET', 'POST'])
+def highlight_pdf(blob_client, query):
+    try:
+        data = blob_client.download_blob().readall()
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        tmp.write(data); tmp.close()
+        doc = fitz.open(tmp.name)
+        pcol = [(1,1,0),(0,0.8,0.8),(1,0.75,0.8),(0.56,0.93,0.56),
+                (0.6,0.98,0.6),(0.68,0.85,0.9),(1,0.71,0.76),(0.93,0.51,0.93)]
+        cmap = {w.lower(): pcol[i % len(pcol)] for i,w in enumerate(query.split())}
+        for pg in doc:
+            for w,c in cmap.items():
+                for inst in pg.search_for(w, quads=True):
+                    annot = pg.add_highlight_annot(inst)
+                    annot.set_colors(stroke=c); annot.update()
+        buf = io.BytesIO(); doc.save(buf); doc.close(); os.unlink(tmp.name)
+        buf.seek(0); return buf.getvalue()
+    except Exception as e:
+        app.logger.error(f"PDF highlight error: {e}")
+        return None
+
+def sas_url(blob_name):
+    token = generate_blob_sas(
+        account_name   = blob_service_client.account_name,
+        container_name = CONTAINER_NAME,
+        blob_name      = blob_name,
+        account_key    = ACCOUNT_KEY,
+        permission     = BlobSasPermissions(read=True),
+        expiry         = datetime.datetime.utcnow() + datetime.timedelta(hours=1),
+        content_disposition="inline",
+    )
+    return f"{container_client.url}/{blob_name}?{token}"
+
+# ─── AUTH ROUTES ───────────────────────────────────────────────────────────────
+@app.route("/login", methods=["GET","POST"])
 def login():
-    if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
-        if username in VALID_CREDENTIALS and VALID_CREDENTIALS[username] == password:
-            session['username'] = username
-            return redirect(url_for('index'))
-        return render_template('login.html', error='Invalid username or password')
-    return render_template('login.html')
+    if request.method == "POST":
+        u, p = request.form.get("username"), request.form.get("password")
+        if VALID_CREDENTIALS.get(u) == p:
+            session["username"] = u
+            return redirect(url_for("index"))
+        return render_template("login.html", error="Invalid credentials")
+    return render_template("login.html")
 
-@app.route('/logout')
+@app.route("/logout")
 def logout():
-    session.pop('username', None)
-    return redirect(url_for('login'))
+    session.pop("username", None)
+    return redirect(url_for("login"))
 
-@app.route('/')
+# ─── UI ROUTES ────────────────────────────────────────────────────────────────
+@app.route("/")
 @login_required
-def index():
-    return render_template('index4.html')
+def index(): return render_template("index.html")
 
-@app.route('/search', methods=['POST'])
+# Facet helpers ----------------------------------------------------------------
+# ─── FACET HELPERS ───────────────────────────────────────────────────────────────
+@app.route("/filetypes")
+@login_required
+def filetypes():
+    payload = {"search":"*","facets":["file_type,count:1000"],"top":0}
+    hdrs = {"api-key":API_KEY,"Content-Type":"application/json"}
+    try:
+        res = requests.post(AZURE_ENDPOINT, headers=hdrs, json=payload).json()
+        vals = [f["value"] for f in res.get("@search.facets",{}).get("file_type",[])]
+        return jsonify({"file_types":vals})
+    except Exception as e:
+        app.logger.error(f"File-type facet error: {e}")
+        return jsonify({"file_types":[]})
+
+@app.route("/uploaders")
+@login_required
+def uploaders():
+    payload = {"search":"*","facets":["uploaded_by,count:1000"],"top":0}
+    hdrs = {"api-key":API_KEY,"Content-Type":"application/json"}
+    try:
+        res = requests.post(AZURE_ENDPOINT, headers=hdrs, json=payload).json()
+        vals = [f["value"] for f in res.get("@search.facets",{}).get("uploaded_by",[])]
+        return jsonify({"uploaders":vals})
+    except Exception as e:
+        app.logger.error(f"Uploader facet error: {e}")
+        return jsonify({"uploaders":[]})
+
+@app.route("/categories")
+@login_required
+def categories():
+    payload = {"search":"*","facets":["Category,count:1000"],"top":0}
+    hdrs = {"api-key":API_KEY,"Content-Type":"application/json"}
+    try:
+        res = requests.post(AZURE_ENDPOINT, headers=hdrs, json=payload).json()
+        vals = [f["value"] for f in res.get("@search.facets",{}).get("Category",[])]
+        return jsonify({"categories":vals})
+    except Exception as e:
+        app.logger.error(f"Category facet error: {e}")
+        return jsonify({"categories":[]})
+
+# ─── SEARCH API ────────────────────────────────────────────────────────────────
+@app.route("/search", methods=["POST"])
 @login_required
 def search():
-    user_query = request.form.get('query')
-    if not user_query:
-        return jsonify({'error': 'No query provided'}), 400
+    q         = (request.form.get("query") or "").strip()
+    ftype     = request.form.get("file_type","").strip()
+    fsize     = request.form.get("size","")
+    drange    = request.form.get("date_range","")
+    uploader  = request.form.get("uploaded_by","").strip()
+    category  = request.form.get("category","").strip()
 
-    headers = {
-        "Content-Type": "application/json",
-        "api-key": API_KEY
-    }
+    # Debug logging
+    app.logger.debug(f"Received uploader filter value: {uploader}")
+    app.logger.debug(f"Received category filter value: {category}")
+
+    # OData filter
+    flist = [f"authorized_users eq '{session['username']}'"]
+    if ftype:    flist.append(f"file_type eq '{ftype}'")
+    if uploader: 
+        # Ensure exact match for uploaded_by field
+        flist.append(f"uploaded_by eq '{uploader}'")
+    if category:
+        # Ensure exact match for Category field
+        flist.append(f"Category eq '{category}'")
+
+    if fsize == "small":   flist.append("file_size lt 1048576")
+    if fsize == "medium":  flist.append("file_size ge 1048576 and file_size le 10485760")
+    if fsize == "large":   flist.append("file_size gt 10485760")
+
+    if drange:
+        now = datetime.datetime.utcnow()
+        if   drange=="today":     cutoff=now.replace(hour=0,minute=0,second=0,microsecond=0)
+        elif drange=="yesterday": cutoff=(now-datetime.timedelta(days=1)).replace(hour=0,minute=0,second=0,microsecond=0)
+        elif drange=="last_week": cutoff=now-datetime.timedelta(days=7)
+        elif drange=="last_month":cutoff=now-datetime.timedelta(days=30)
+        elif drange=="last_year": cutoff=now-datetime.timedelta(days=365)
+        else: cutoff=None
+        if cutoff: flist.append(f"last_modified ge {cutoff.isoformat()}Z")
+
+    # Debug logging
+    app.logger.debug(f"Final filter string: {' and '.join(flist)}")
 
     payload = {
-        "search": user_query,
+        "search"      : "*" if not q else q,
         "searchFields": "content,metadata_storage_name",
-        "select": "content,metadata_storage_name,metadata_storage_path",
-        "scoringProfile": "contentBoost",
-        "top": 10,
-        "queryType": "full",
-        "searchMode": "all",
-        "filter": f"authorized_users eq '{session['username']}'"
+        "select"      : "content,metadata_storage_name,metadata_storage_path,file_type,file_size,last_modified,uploaded_by,Category",
+        "filter"      : " and ".join(flist),
+        "top"         : 50,
+        "queryType"   : "full",
+        "searchMode"  : "all"
     }
 
     try:
-        response = requests.post(endpoint, headers=headers, json=payload)
-        response.raise_for_status()
-        results = response.json().get("value", [])
-        
-        for result in results:
-            if 'metadata_storage_path' in result:
-                try:
-                    blob_name = result['metadata_storage_name']
-                    blob_client = container_client.get_blob_client(blob_name)
-                    
-                    if not blob_client.exists():
-                        result['view_url'] = None
-                        continue
-                    
-                    # File type detection
-                    ext = blob_name.lower().split('.')[-1] if '.' in blob_name else ''
-                    result['file_type'] = {
-                        'pdf': 'pdf',
-                        'doc': 'word', 'docx': 'word',
-                        'xls': 'excel', 'xlsx': 'excel',
-                        'ppt': 'powerpoint', 'pptx': 'powerpoint',
-                        'txt': 'text',
-                        'json': 'text',
-                        'csv': 'text'
-                    }.get(ext, 'other')
-                    
-                    # For DOCX files, process and highlight keywords
-                    if ext in ['doc', 'docx']:
-                        highlighted_docx = highlight_keywords_in_docx(blob_client, user_query)
-                        if highlighted_docx:
-                            # Upload the highlighted version to a temporary blob
-                            temp_blob_name = f"highlighted_{blob_name}"
-                            temp_blob_client = container_client.get_blob_client(temp_blob_name)
-                            temp_blob_client.upload_blob(highlighted_docx, overwrite=True)
-                            
-                            # Generate SAS token for the highlighted version
-                            sas_token = generate_blob_sas(
-                                account_name=blob_service_client.account_name,
-                                container_name=CONTAINER_NAME,
-                                blob_name=temp_blob_name,
-                                account_key=ACCOUNT_KEY,
-                                permission=BlobSasPermissions(read=True),
-                                expiry=datetime.datetime.utcnow() + datetime.timedelta(hours=1),
-                                content_disposition='inline'
-                            )
-                            result['view_url'] = f"{temp_blob_client.url}?{sas_token}"
-                        else:
-                            # Fallback to original if highlighting fails
-                            sas_token = generate_blob_sas(
-                                account_name=blob_service_client.account_name,
-                                container_name=CONTAINER_NAME,
-                                blob_name=blob_name,
-                                account_key=ACCOUNT_KEY,
-                                permission=BlobSasPermissions(read=True),
-                                expiry=datetime.datetime.utcnow() + datetime.timedelta(hours=1),
-                                content_disposition='inline'
-                            )
-                            result['view_url'] = f"{blob_client.url}?{sas_token}"
-                    else:
-                        # For other file types, use original blob
-                        sas_token = generate_blob_sas(
-                            account_name=blob_service_client.account_name,
-                            container_name=CONTAINER_NAME,
-                            blob_name=blob_name,
-                            account_key=ACCOUNT_KEY,
-                            permission=BlobSasPermissions(read=True),
-                            expiry=datetime.datetime.utcnow() + datetime.timedelta(hours=1),
-                            content_disposition='inline'
-                        )
-                        result['view_url'] = f"{blob_client.url}?{sas_token}"
-                    
-                    # Metadata
-                    props = blob_client.get_blob_properties()
-                    result['file_size'] = props.size
-                    result['last_modified'] = props.last_modified.isoformat()
-                    
-                except Exception as e:
-                    app.logger.error(f"Error generating SAS URL for blob {blob_name}: {str(e)}")
-                    result['view_url'] = None
+        hdrs={"api-key":API_KEY,"Content-Type":"application/json"}
+        # Debug logging
+        app.logger.debug(f"Search payload: {payload}")
+        response = requests.post(AZURE_ENDPOINT, headers=hdrs, json=payload).json()
+        docs = response.get("value", [])
+        # Debug logging
+        app.logger.debug(f"Number of results: {len(docs)}")
 
-            # Highlight content
-            if 'content' in result:
-                result['highlighted_content'] = highlight_keywords(result['content'], user_query)
-            else:
-                result['highlighted_content'] = ''
+        for d in docs:
+            blob=d["metadata_storage_name"]; ext=(blob.split(".")[-1] if "." in blob else "").lower()
+            d["file_type"]=ext
+            client=container_client.get_blob_client(blob)
+            url=sas_url(blob)
+            # Highlight if PDF / DOCX
+            if ext in ("doc","docx"):
+                if (hd:=highlight_docx(client,q)): 
+                    temp=f"highlighted_{blob}";container_client.upload_blob(temp,hd,overwrite=True);url=sas_url(temp)
+            elif ext=="pdf":
+                if (hp:=highlight_pdf(client,q)):
+                    temp=f"highlighted_{blob}";container_client.upload_blob(temp,hp,overwrite=True);url=sas_url(temp)
+            d["view_url"]=url
+            d["highlighted_content"]=highlight_text(d.get("content",""),q)
+        return jsonify({"results":docs})
+    except Exception as e:
+        app.logger.error(f"Search failure: {e}")
+        return jsonify({"error":"Search service error"}),500
 
-        return jsonify({'results': results})
-    
-    except requests.exceptions.RequestException as e:
-        app.logger.error(f"Search API error: {str(e)}")
-        return jsonify({'error': 'Search service error. Please try again later.'}), 500
-
-if __name__ == '__main__':
-  app.run(debug=True, port=5001, use_reloader=False)
+# ───────────────────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    app.run(debug=True, port=5002, use_reloader=False)

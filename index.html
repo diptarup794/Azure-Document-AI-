@@ -1,0 +1,1948 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document AI Search</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    <!-- Use PDF.js 3.x for better features -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf_viewer.min.css">
+    <style>
+        body {
+            background-color: #f8fafc;
+        }
+        .title-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .title-icon {
+            height: 40px;
+            margin-left: 10px;
+        }
+        #previewPanel {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 80%;
+            height: 80%;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            z-index: 1001;
+            display: flex;
+            flex-direction: column;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+        }
+        #previewPanel.active {
+            opacity: 1;
+            visibility: visible;
+        }
+        #previewPanel.fullscreen {
+            width: 100%;
+            height: 100%;
+            border-radius: 0;
+        }
+        #overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+        }
+        #overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+        #previewContent {
+            flex: 1;
+            position: relative;
+            overflow: auto;
+            background: #f8f9fa;
+        }
+        #previewFrame {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+        #imagePreview {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            display: none;
+        }
+        .dropdown-content {
+            display: none;
+            position: absolute;
+            background-color: white;
+            min-width: 160px;
+            box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+            z-index: 1;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .dropdown:hover .dropdown-content {
+            display: block;
+        }
+        /* PDF viewer container */
+        #pdfContainer {
+            display: none;
+            flex: 1;
+            overflow: auto;
+            background-color: #525659;
+            position: relative;
+        }
+        #pdfViewer {
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+        }
+        /* PDF search controls */
+        #pdfSearchControls {
+            display: none;
+            padding: 8px 16px;
+            background-color: #f1f5f9;
+            border-top: 1px solid #e2e8f0;
+        }
+        .search-match {
+            background-color: rgba(255, 255, 0, 0.3);
+        }
+        .search-match.selected {
+            background-color: rgba(255, 165, 0, 0.5);
+        }
+        #searchInfo {
+            margin-left: 10px;
+            font-size: 14px;
+            color: #4b5563;
+        }
+        /* Pagination styles */
+        #pagination {
+            margin-top: 1.5rem;
+        }
+        #pagination button {
+            padding: 0.5rem 1rem;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.375rem;
+            background-color: white;
+            color: #4b5563;
+            transition: all 0.2s;
+        }
+        #pagination button:hover:not(:disabled) {
+            background-color: #f3f4f6;
+            color: #1e40af;
+        }
+        #pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        #pagination .current-page {
+            font-weight: 600;
+            color: #1e40af;
+        }
+        /* Page transition animations */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeOut {
+            from { opacity: 1; transform: translateY(0); }
+            to { opacity: 0; transform: translateY(-20px); }
+        }
+        .page-transition-enter {
+            animation: fadeIn 0.4s ease forwards;
+        }
+        .page-transition-exit {
+            animation: fadeOut 0.3s ease forwards;
+        }
+        /* PDF search highlight styles */
+        .textLayer .highlight {
+            margin: -1px;
+            padding: 1px;
+            background-color: rgba(255, 255, 0, 0.4);
+            border-radius: 4px;
+        }
+        .textLayer .highlight.selected {
+            background-color: rgba(255, 165, 0, 0.6);
+        }
+        /* Enhanced search controls styling */
+        .search-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 16px;
+            background-color: #f1f5f9;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        .search-input-container {
+            position: relative;
+            flex-grow: 1;
+            max-width: 300px;
+        }
+        .search-input-container input {
+            width: 100%;
+            padding: 8px 12px;
+            padding-right: 32px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        .search-nav-button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 36px;
+            height: 36px;
+            border-radius: 6px;
+            background-color: #e2e8f0;
+            color: #475569;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .search-nav-button:hover:not(:disabled) {
+            background-color: #cbd5e1;
+            color: #1e40af;
+        }
+        .search-nav-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .search-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            color: #475569;
+        }
+        .search-info .count {
+            background-color: #e2e8f0;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-weight: 500;
+        }
+        .search-info .page-info {
+            color: #64748b;
+        }
+        .search-shortcut {
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #94a3b8;
+            font-size: 12px;
+            pointer-events: none;
+        }
+        /* Image controls */
+        .image-controls {
+            display: none;
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 8px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .image-controls button {
+            padding: 6px 12px;
+            margin: 0 4px;
+            border: none;
+            border-radius: 4px;
+            background: #e2e8f0;
+            color: #475569;
+            cursor: pointer;
+        }
+        .image-controls button:hover {
+            background: #cbd5e1;
+        }
+        /* Search results styling */
+        .matching-lines {
+            margin-top: 12px;
+            padding: 12px;
+            background-color: #f8fafc;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .matching-line {
+            display: flex;
+            margin-bottom: 8px;
+            font-family: 'Courier New', monospace;
+            line-height: 1.5;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+        }
+        
+        .matching-line:hover {
+            background-color: #f1f5f9;
+        }
+        
+        .matching-line.active {
+            background-color: #e2e8f0;
+        }
+        
+        .line-info {
+            min-width: 120px;
+            padding-right: 12px;
+            color: #64748b;
+            text-align: right;
+            user-select: none;
+            font-size: 0.9em;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+        }
+        
+        .page-number {
+            color: #1e40af;
+            font-weight: 500;
+        }
+        
+        .line-number {
+            color: #64748b;
+        }
+        
+        .line-content {
+            flex: 1;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        
+        .line-content mark {
+            background-color: #fef08a;
+            padding: 2px 0;
+            border-radius: 2px;
+        }
+        
+        .no-matches {
+            color: #64748b;
+            font-style: italic;
+            padding: 8px 0;
+        }
+        
+        /* Page navigation controls */
+        .page-nav-controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.95);
+            padding: 12px 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            z-index: 1000;
+        }
+        
+        .page-nav-input {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .page-nav-input input {
+            width: 60px;
+            padding: 4px 8px;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 14px;
+        }
+        
+        .page-nav-input label {
+            color: #475569;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        
+        .page-nav-button {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            background: #e2e8f0;
+            color: #475569;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .page-nav-button:hover {
+            background: #cbd5e1;
+            color: #1e40af;
+        }
+        
+        .page-nav-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .page-info {
+            color: #64748b;
+            font-size: 14px;
+            padding: 0 8px;
+        }
+        
+        /* Page navigation controls */
+        .page-nav-controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.95);
+            padding: 12px 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            z-index: 1000;
+        }
+        
+        .occurrence-nav {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 0 12px;
+            border-left: 1px solid #e2e8f0;
+            border-right: 1px solid #e2e8f0;
+        }
+        
+        .occurrence-count {
+            background: #e2e8f0;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 14px;
+            color: #475569;
+        }
+        
+        .occurrence-nav-button {
+            padding: 4px 8px;
+            border: none;
+            border-radius: 4px;
+            background: #e2e8f0;
+            color: #475569;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .occurrence-nav-button:hover:not(:disabled) {
+            background: #cbd5e1;
+            color: #1e40af;
+        }
+        
+        .occurrence-nav-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .current-occurrence {
+            font-size: 14px;
+            color: #475569;
+            min-width: 60px;
+            text-align: center;
+        }
+        
+        .preview-search-ui {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            display: none;
+            flex-direction: column;
+            gap: 8px;
+            background: white;
+            padding: 12px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            z-index: 1000;
+            max-height: 80vh;
+            overflow-y: auto;
+            min-width: 300px;
+        }
+        
+        .preview-search-ui .search-input-container {
+            position: relative;
+            display: flex;
+            align-items: center;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        .preview-search-ui input {
+            width: 200px;
+            padding: 4px 8px;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            font-size: 14px;
+            background-color: #f8fafc;
+            cursor: default;
+        }
+        
+        .preview-search-ui .search-count {
+            margin-left: 8px;
+            color: #64748b;
+            font-size: 14px;
+        }
+        
+        .preview-search-ui .matching-lines {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            margin: 8px 0;
+        }
+        
+        .preview-search-ui .page-matches {
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        .preview-search-ui .page-matches:last-child {
+            border-bottom: none;
+        }
+        
+        .preview-search-ui .page-header {
+            background-color: #f1f5f9;
+            padding: 8px;
+            font-weight: 600;
+            color: #1e40af;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        .preview-search-ui .matching-line {
+            padding: 8px;
+            border-bottom: 1px solid #e2e8f0;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        
+        .preview-search-ui .matching-line:last-child {
+            border-bottom: none;
+        }
+        
+        .preview-search-ui .matching-line:hover {
+            background-color: #f1f5f9;
+        }
+        
+        .preview-search-ui .matching-line.active {
+            background-color: #e2e8f0;
+        }
+        
+        .preview-search-ui .line-info {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 4px;
+            font-size: 12px;
+            color: #64748b;
+        }
+        
+        .preview-search-ui .line-content {
+            font-size: 14px;
+            color: #1e293b;
+        }
+        
+        .preview-search-ui .occurrence-nav {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #e2e8f0;
+        }
+        
+        .preview-search-ui .occurrence-count {
+            font-size: 14px;
+            color: #475569;
+            min-width: 60px;
+            text-align: center;
+        }
+        
+        .preview-search-ui .occurrence-nav-button {
+            padding: 4px 8px;
+            border: none;
+            border-radius: 4px;
+            background: #e2e8f0;
+            color: #475569;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .preview-search-ui .occurrence-nav-button:hover:not(:disabled) {
+            background: #cbd5e1;
+            color: #1e40af;
+        }
+        
+        .preview-search-ui .occurrence-nav-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .preview-search-ui .no-matches {
+            padding: 8px;
+            color: #64748b;
+            font-style: italic;
+            text-align: center;
+        }
+        
+        .page-matches {
+            margin-bottom: 16px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .page-header {
+            background-color: #f1f5f9;
+            padding: 12px;
+            font-weight: 600;
+            color: #1e40af;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 16px;
+        }
+        
+        .matching-line {
+            padding: 12px;
+            border-bottom: 1px solid #e2e8f0;
+            background-color: white;
+        }
+        
+        .matching-line:last-child {
+            border-bottom: none;
+        }
+        
+        .matching-line:hover {
+            background-color: #f8fafc;
+        }
+        
+        .matching-line.active {
+            background-color: #e2e8f0;
+        }
+        
+        .line-info {
+            margin-bottom: 8px;
+            color: #64748b;
+            font-size: 14px;
+        }
+        
+        .line-number {
+            font-weight: 500;
+            color: #1e40af;
+        }
+        
+        .line-content {
+            color: #1e293b;
+            font-size: 14px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        
+        .line-content mark {
+            background-color: #fef08a;
+            padding: 2px 0;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mx-auto px-4 py-8">
+        <div class="text-center mb-8">
+            <div class="title-container">
+                <h1 class="text-3xl font-bold text-gray-800">Document AI Search</h1>
+                <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Logo" class="title-icon">
+            </div>
+            <p class="text-gray-600 mt-2">Search through your documents with AI-powered insights</p>
+            <div id="docCount" class="text-blue-700 font-semibold mt-2"></div>
+        </div>
+
+        <form id="searchForm" class="mb-8">
+            <div class="flex flex-col md:flex-row gap-4">
+                <div class="flex-grow relative">
+                    <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <i class="fas fa-search text-gray-400"></i>
+                    </div>
+                    <input type="text" id="searchInput" class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="Search for keywords in your documents...">
+                </div>
+                <button type="submit" class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2">
+                    <i class="fas fa-search"></i>
+                    Search
+                </button>
+            </div>
+            
+            <!-- Filtering Options (with uploader) -->
+            <div class="mt-4 flex flex-wrap gap-4">
+                <div class="relative inline-block">
+                    <select id="dateFilter" class="block appearance-none bg-white border border-gray-300 hover:border-gray-400 px-4 py-2 pr-8 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <option value="">Filter by Date</option>
+                        <option value="today">Today</option>
+                        <option value="yesterday">Yesterday</option>
+                        <option value="last_week">Last 7 days</option>
+                        <option value="last_month">Last 30 days</option>
+                        <option value="last_year">Last year</option>
+                    </select>
+                    <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
+                        <i class="fas fa-chevron-down"></i>
+                    </div>
+                </div>
+                
+                <div class="relative inline-block">
+                    <select id="sizeFilter" class="block appearance-none bg-white border border-gray-300 hover:border-gray-400 px-4 py-2 pr-8 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <option value="">Filter by Size</option>
+                        <option value="small">Small (&lt; 1MB)</option>
+                        <option value="medium">Medium (1-10MB)</option>
+                        <option value="large">Large (&gt; 10MB)</option>
+                    </select>
+                    <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
+                        <i class="fas fa-chevron-down"></i>
+                    </div>
+                </div>
+                
+                <div class="relative inline-block" id="fileTypeFilterContainer">
+                    <select id="fileTypeFilter" class="block appearance-none bg-white border border-gray-300 hover:border-gray-400 px-4 py-2 pr-8 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <option value="">Filter by Type</option>
+                        <!-- File types will be populated dynamically -->
+                    </select>
+                    <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
+                        <i class="fas fa-chevron-down"></i>
+                    </div>
+                </div>
+                
+                <!-- Uploader Dropdown -->
+                <div class="relative inline-block">
+                    <select id="uploaderFilter" name="uploaded_by" class="block appearance-none bg-white border border-gray-300 hover:border-gray-400 px-4 py-2 pr-8 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <option value="">Filter by Uploader</option>
+                        <!-- Will be populated dynamically -->
+                    </select>
+                    <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
+                        <i class="fas fa-chevron-down"></i>
+                    </div>
+                </div>
+                
+                <!-- Category Dropdown -->
+                <div class="relative inline-block">
+                    <select id="categoryFilter" name="category" class="block appearance-none bg-white border border-gray-300 hover:border-gray-400 px-4 py-2 pr-8 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <option value="">Filter by Category</option>
+                        <!-- Will be populated dynamically -->
+                    </select>
+                    <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
+                        <i class="fas fa-chevron-down"></i>
+                    </div>
+                </div>
+                
+                <button type="button" id="clearFilters" class="text-blue-600 hover:text-blue-800 px-4 py-2 rounded-lg flex items-center">
+                    <i class="fas fa-times mr-2"></i>
+                    Clear Filters
+                </button>
+            </div>
+        </form>
+
+        <div id="loading" class="hidden flex justify-center my-8">
+            <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+        </div>
+
+        <div id="results" class="space-y-6">
+            <!-- Search results will appear here -->
+        </div>
+        <div id="pagination" class="flex justify-center items-center gap-4 mt-6"></div>
+    </div>
+
+    <!-- Preview Panel -->
+    <div id="overlay"></div>
+    <div id="previewPanel">
+        <div class="flex items-center justify-between p-4 border-b">
+            <h3 id="previewTitle" class="text-lg font-semibold text-gray-800">Document Preview</h3>
+            <div class="flex items-center gap-3">
+                <button onclick="toggleFullscreen()" class="text-gray-600 hover:text-gray-800">
+                    <i id="fullscreenIcon" class="fas fa-expand"></i>
+                </button>
+                <button onclick="closePreview()" class="text-gray-600 hover:text-gray-800">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        </div>
+        
+        <div id="previewLoading" class="flex-1 flex items-center justify-center">
+            <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+        </div>
+        <div id="previewError" class="flex-1 flex flex-col items-center justify-center" style="display: none;">
+            <i class="fas fa-exclamation-circle text-red-500 text-4xl mb-4"></i>
+            <p class="text-gray-700">Unable to preview this document.</p>
+        </div>
+        
+        <div id="previewContent">
+            <iframe id="previewFrame" style="display: none;"></iframe>
+            <img id="imagePreview" alt="Preview">
+            <div id="imageControls" class="image-controls">
+                <button onclick="zoomImage(1.2)"><i class="fas fa-search-plus"></i></button>
+                <button onclick="zoomImage(0.8)"><i class="fas fa-search-minus"></i></button>
+                <button onclick="resetZoom()"><i class="fas fa-sync"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- PDF.js Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf_viewer.min.js"></script>
+
+    <script>
+        // Initialize PDF.js
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+        
+        // Store all results to filter locally
+        let allResults = [];
+        let fileTypes = new Set();
+        let currentPage = 1;
+        let currentLine = 1;
+        let totalPages = 1;
+        let totalLines = 1;
+        let filteredResults = [];
+        const pageSize = 5;
+        
+        // PDF viewer variables
+        let pdfDoc = null;
+        let pdfViewer = null;
+        let currentZoom = 1;
+        
+        let occurrences = [];
+        let currentOccurrenceIndex = -1;
+        
+        // Add these variables at the top with other global variables
+        let matchingLines = [];
+        
+        // Populate file type filters on load
+        window.addEventListener('DOMContentLoaded', () => {
+            loadFileTypes();
+        });
+
+        async function loadFileTypes() {
+            try {
+                const res = await fetch('/filetypes');
+                const data = await res.json();
+                const sel = document.getElementById('fileTypeFilter');
+                data.file_types.forEach(t => {
+                    const opt = document.createElement('option');
+                    opt.value = t; 
+                    opt.textContent = t.charAt(0).toUpperCase() + t.slice(1);
+                    sel.appendChild(opt);
+                });
+            } catch (e) { 
+                console.error('File-type list error', e); 
+            }
+        }
+        
+        document.getElementById('searchForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const query = document.getElementById('searchInput').value.trim();
+            if (!query) return;
+            
+            const resultsDiv = document.getElementById('results');
+            const loading = document.getElementById('loading');
+            
+            resultsDiv.innerHTML = '';
+            loading.classList.remove('hidden');
+            
+            const formData = new FormData();
+            formData.append('query', query);
+            formData.append('file_type', document.getElementById('fileTypeFilter').value);
+            formData.append('size', document.getElementById('sizeFilter').value);
+            formData.append('date_range', document.getElementById('dateFilter').value);
+            formData.append('uploaded_by', document.getElementById('uploaderFilter').value);
+            formData.append('category', document.getElementById('categoryFilter').value);
+            
+            try {
+                const response = await fetch('/search', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                if (data.results.length === 0) {
+                    resultsDiv.innerHTML = `
+                        <div class="bg-yellow-50 border-l-4 border-yellow-400 p-6 rounded-lg">
+                            <div class="flex items-center">
+                                <i class="fas fa-exclamation-circle text-yellow-400 text-xl mr-3"></i>
+                                <p class="text-yellow-700">No results found. Try different keywords or filters.</p>
+                            </div>
+                        </div>
+                    `;
+                    document.getElementById('docCount').textContent = 'No documents found';
+                    document.getElementById('pagination').innerHTML = '';
+                    return;
+                }
+                
+                // Store all results for filtering
+                allResults = data.results;
+                
+                // Display all results initially (page 1)
+                displayResults(allResults, 1);
+                
+            } catch (error) {
+                resultsDiv.innerHTML = `
+                    <div class="bg-red-50 border-l-4 border-red-400 p-6 rounded-lg">
+                        <div class="flex items-center">
+                            <i class="fas fa-exclamation-circle text-red-400 text-xl mr-3"></i>
+                            <p class="text-red-700">Error: ${error.message}</p>
+                        </div>
+                    </div>
+                `;
+                document.getElementById('docCount').textContent = '';
+                document.getElementById('pagination').innerHTML = '';
+            } finally {
+                loading.classList.add('hidden');
+            }
+        });
+        
+        // Function to display filtered results with pagination
+        function displayResults(results, page = 1) {
+            filteredResults = results;
+            currentPage = page;
+            const docCountDiv = document.getElementById('docCount');
+            docCountDiv.textContent = results.length ? `${results.length} document${results.length > 1 ? 's' : ''} found` : 'No documents found';
+            
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '';
+            
+            // Calculate pagination
+            const totalPages = Math.ceil(results.length / pageSize);
+            const startIndex = (page - 1) * pageSize;
+            const endIndex = Math.min(startIndex + pageSize, results.length);
+            
+            // Display current page results
+            const pageResults = results.slice(startIndex, endIndex);
+            
+            if (pageResults.length === 0) {
+                resultsDiv.innerHTML = `
+                    <div class="bg-yellow-50 border-l-4 border-yellow-400 p-6 rounded-lg">
+                        <div class="flex items-center">
+                            <i class="fas fa-exclamation-circle text-yellow-400 text-xl mr-3"></i>
+                            <p class="text-yellow-700">No results found. Try different keywords or filters.</p>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+            
+            // Add page transition animation class
+            resultsDiv.classList.add('page-transition-enter');
+            
+            // Create result cards
+            pageResults.forEach(doc => {
+                const fileIcon = getFileIcon(doc.file_type);
+                const fileSize = formatFileSize(doc.file_size);
+                const lastModified = formatDate(doc.last_modified);
+                
+                const resultCard = document.createElement('div');
+                resultCard.className = 'bg-white rounded-lg shadow-md overflow-hidden transition-all duration-300 hover:shadow-lg';
+                
+                // Extract and format matching lines from content
+                const matchingLines = doc.highlighted_content ? 
+                    formatMatchingLines(doc.highlighted_content) : 
+                    '<div class="no-matches">No matching content found</div>';
+                
+                resultCard.innerHTML = `
+                    <div class="p-6">
+                        <div class="flex items-start">
+                            <div class="flex-shrink-0 mr-4">
+                                <div class="w-12 h-12 flex items-center justify-center rounded-lg bg-blue-50 text-blue-500">
+                                    <i class="${fileIcon} text-2xl"></i>
+                                </div>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <h3 class="text-lg font-semibold text-gray-800 truncate">${doc.metadata_storage_name}</h3>
+                                <div class="flex flex-wrap gap-2 mt-2">
+                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                        <i class="fas fa-file-alt mr-1"></i> ${doc.file_type || 'Unknown'}
+                                    </span>
+                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                        <i class="fas fa-weight mr-1"></i> ${fileSize}
+                                    </span>
+                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                                        <i class="fas fa-clock mr-1"></i> ${lastModified}
+                                    </span>
+                                    ${doc.uploaded_by ? `
+                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                                        <i class="fas fa-user mr-1"></i> ${doc.uploaded_by}
+                                    </span>` : ''}
+                                </div>
+                                <div class="matching-lines">
+                                    ${matchingLines}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mt-4 flex justify-end">
+                            ${doc.view_url ? `
+                            <button onclick="openPreview('${doc.metadata_storage_name}', '${doc.view_url}', '${doc.file_type}')" class="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                                <i class="fas fa-eye mr-1.5"></i> View
+                            </button>` : ''}
+                        </div>
+                    </div>
+                `;
+                
+                resultsDiv.appendChild(resultCard);
+            });
+            
+            // Remove animation class after animation completes
+            setTimeout(() => {
+                resultsDiv.classList.remove('page-transition-enter');
+            }, 400);
+            
+            // Update pagination controls
+            updatePagination(totalPages, page);
+        }
+        
+        function updatePagination(totalPages, currentPage) {
+            const paginationDiv = document.getElementById('pagination');
+            paginationDiv.innerHTML = '';
+            
+            if (totalPages <= 1) return;
+            
+            // Previous button
+            const prevButton = document.createElement('button');
+            prevButton.innerHTML = '<i class="fas fa-chevron-left mr-1"></i> Prev';
+            prevButton.disabled = currentPage === 1;
+            prevButton.addEventListener('click', () => {
+                if (currentPage > 1) {
+                    displayResults(filteredResults, currentPage - 1);
+                }
+            });
+            paginationDiv.appendChild(prevButton);
+            
+            // Page numbers
+            const maxVisiblePages = 5;
+            let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+            let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+            
+            if (endPage - startPage + 1 < maxVisiblePages) {
+                startPage = Math.max(1, endPage - maxVisiblePages + 1);
+            }
+            
+            for (let i = startPage; i <= endPage; i++) {
+                const pageButton = document.createElement('button');
+                pageButton.textContent = i;
+                if (i === currentPage) {
+                    pageButton.className = 'current-page';
+                }
+                pageButton.addEventListener('click', () => {
+                    displayResults(filteredResults, i);
+                });
+                paginationDiv.appendChild(pageButton);
+            }
+            
+            // Next button
+            const nextButton = document.createElement('button');
+            nextButton.innerHTML = 'Next <i class="fas fa-chevron-right ml-1"></i>';
+            nextButton.disabled = currentPage === totalPages;
+            nextButton.addEventListener('click', () => {
+                if (currentPage < totalPages) {
+                    displayResults(filteredResults, currentPage + 1);
+                }
+            });
+            paginationDiv.appendChild(nextButton);
+        }
+        
+        function getFileIcon(fileType) {
+            if (!fileType) return 'fas fa-file';
+            
+            const iconMap = {
+                'pdf': 'fas fa-file-pdf',
+                'doc': 'fas fa-file-word',
+                'docx': 'fas fa-file-word',
+                'xls': 'fas fa-file-excel',
+                'xlsx': 'fas fa-file-excel',
+                'ppt': 'fas fa-file-powerpoint',
+                'pptx': 'fas fa-file-powerpoint',
+                'txt': 'fas fa-file-alt',
+                'csv': 'fas fa-file-csv',
+                'json': 'fas fa-file-code',
+                'jpg': 'fas fa-file-image',
+                'jpeg': 'fas fa-file-image',
+                'png': 'fas fa-file-image',
+                'gif': 'fas fa-file-image'
+            };
+            
+            return iconMap[fileType.toLowerCase()] || 'fas fa-file';
+        }
+        
+        function formatFileSize(bytes) {
+            if (!bytes) return 'Unknown size';
+            
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let size = bytes;
+            let unitIndex = 0;
+            
+            while (size >= 1024 && unitIndex < units.length - 1) {
+                size /= 1024;
+                unitIndex++;
+            }
+            
+            return `${size.toFixed(1)} ${units[unitIndex]}`;
+        }
+        
+        function formatDate(dateString) {
+            if (!dateString) return 'Unknown date';
+            
+            const date = new Date(dateString);
+            return date.toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric'
+            });
+        }
+        
+        function openPreview(fileName, fileUrl, fileType) {
+            const previewPanel = document.getElementById('previewPanel');
+            const overlay = document.getElementById('overlay');
+            const previewTitle = document.getElementById('previewTitle');
+            const previewFrame = document.getElementById('previewFrame');
+            const imagePreview = document.getElementById('imagePreview');
+            const previewLoading = document.getElementById('previewLoading');
+            const previewError = document.getElementById('previewError');
+            const imageControls = document.getElementById('imageControls');
+            
+            // Reset state
+            previewFrame.style.display = 'none';
+            imagePreview.style.display = 'none';
+            imageControls.style.display = 'none';
+            previewLoading.style.display = 'flex';
+            previewError.style.display = 'none';
+            currentZoom = 1;
+            
+            // Set title
+            previewTitle.textContent = fileName;
+            
+            // Show preview panel
+            overlay.classList.add('active');
+            previewPanel.classList.add('active');
+            
+            // Handle different file types
+            const imageTypes = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'];
+            const documentTypes = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt'];
+            
+            if (imageTypes.includes(fileType.toLowerCase())) {
+                // Handle images
+                imagePreview.src = fileUrl;
+                imagePreview.onload = function() {
+                    previewLoading.style.display = 'none';
+                    imagePreview.style.display = 'block';
+                    imageControls.style.display = 'block';
+                };
+                imagePreview.onerror = function() {
+                    previewLoading.style.display = 'none';
+                    previewError.style.display = 'flex';
+                };
+            } else if (documentTypes.includes(fileType.toLowerCase())) {
+                // Handle documents
+                const viewerUrl = `https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true`;
+                previewFrame.src = viewerUrl;
+                previewFrame.onload = function() {
+                    previewLoading.style.display = 'none';
+                    previewFrame.style.display = 'block';
+                    
+                    // Initialize search after a short delay to ensure the viewer is ready
+                    setTimeout(() => {
+                        setupSearchIntegration();
+                    }, 1000);
+                };
+                previewFrame.onerror = function() {
+                    previewLoading.style.display = 'none';
+                    previewError.style.display = 'flex';
+                };
+            } else {
+                // Unsupported file type
+                previewLoading.style.display = 'none';
+                previewError.style.display = 'flex';
+            }
+        }
+        
+        function setupSearchIntegration() {
+            const iframe = document.getElementById('previewFrame');
+            if (!iframe.contentWindow) return;
+            
+            // Listen for keyboard events
+            document.addEventListener('keydown', function(e) {
+                // Check if CTRL+F is pressed
+                if (e.ctrlKey && e.key === 'f') {
+                    e.preventDefault(); // Prevent default browser search
+                    
+                    // Get the search term from the main search input
+                    const searchTerm = document.getElementById('searchInput').value.trim();
+                    if (!searchTerm) return;
+                    
+                    // Focus the iframe
+                    iframe.contentWindow.focus();
+                    
+                    // Create and show our custom search UI in the preview panel
+                    showPreviewSearchUI(searchTerm);
+                }
+            });
+        }
+        
+        function showPreviewSearchUI(searchTerm) {
+            const previewPanel = document.getElementById('previewPanel');
+            
+            // Create search UI if it doesn't exist
+            let searchUI = document.getElementById('previewSearchUI');
+            if (!searchUI) {
+                searchUI = document.createElement('div');
+                searchUI.id = 'previewSearchUI';
+                searchUI.className = 'preview-search-ui';
+                searchUI.innerHTML = `
+                    <div class="search-input-container">
+                        <input type="text" id="previewSearchInput" placeholder="Search in document..." readonly>
+                        <span class="search-count"></span>
+                    </div>
+                    <div class="matching-lines" id="matchingLinesContainer"></div>
+                    <div class="occurrence-nav">
+                        <button id="prevMatch" class="occurrence-nav-button" title="Previous match"><i class="fas fa-chevron-up"></i></button>
+                        <span id="occurrenceInfo" class="occurrence-count"></span>
+                        <button id="nextMatch" class="occurrence-nav-button" title="Next match"><i class="fas fa-chevron-down"></i></button>
+                    </div>
+                    <button id="closeSearch" title="Close search"><i class="fas fa-times"></i></button>
+                `;
+                previewPanel.appendChild(searchUI);
+                
+                // Add event listeners
+                const prevMatch = searchUI.querySelector('#prevMatch');
+                const nextMatch = searchUI.querySelector('#nextMatch');
+                const closeSearch = searchUI.querySelector('#closeSearch');
+                
+                prevMatch.addEventListener('click', goToPrevOccurrence);
+                nextMatch.addEventListener('click', goToNextOccurrence);
+                closeSearch.addEventListener('click', hidePreviewSearchUI);
+                
+                // Add keyboard navigation
+                document.addEventListener('keydown', function(e) {
+                    if (!previewPanel.classList.contains('active')) return;
+                    if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        goToPrevOccurrence();
+                    }
+                    if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        goToNextOccurrence();
+                    }
+                });
+            }
+            
+            // Show search UI and set initial search term
+            searchUI.style.display = 'flex';
+            const searchInput = searchUI.querySelector('#previewSearchInput');
+            searchInput.value = searchTerm;
+            
+            // Get matches from the current document's search results
+            const matches = getMatchesFromCurrentDocument();
+            
+            if (matches.length > 0) {
+                renderMatchingLines(matches);
+                afterRenderMatchingLines();
+            } else {
+                const container = document.getElementById('matchingLinesContainer');
+                container.innerHTML = '<div class="no-matches">No matches found.</div>';
+                updateOccurrenceInfo();
+            }
+        }
+        
+        function getMatchesFromCurrentDocument() {
+            const currentDocName = document.getElementById('previewTitle').textContent;
+            const resultCards = document.querySelectorAll('#results .bg-white');
+            let currentDocCard = null;
+            
+            // Find the card for the current document
+            resultCards.forEach(card => {
+                const docName = card.querySelector('h3').textContent;
+                if (docName === currentDocName) {
+                    currentDocCard = card;
+                }
+            });
+            
+            if (!currentDocCard) return [];
+            
+            // Get the matching lines container from the card
+            const matchingLinesContainer = currentDocCard.querySelector('.matching-lines');
+            if (!matchingLinesContainer) return [];
+            
+            // Get all matching lines
+            const matchingLines = matchingLinesContainer.querySelectorAll('.matching-line');
+            const matches = [];
+            
+            matchingLines.forEach(line => {
+                // Extract page and line numbers from the text content
+                const pageText = line.querySelector('.page-number')?.textContent || '';
+                const lineText = line.querySelector('.line-number')?.textContent || '';
+                const content = line.querySelector('.line-content')?.innerHTML || '';
+                
+                // Match various formats: "PAGE: X", "Page X", etc.
+                const pageMatch1 = pageText.match(/(?:PAGE|Page):?\s*(\d+)/i);
+                const pageMatch2 = pageText.match(/Page\s*(\d+)/i);
+                const lineMatch = lineText.match(/(?:LINE|Line):?\s*(\d+)/i);
+                
+                let pageNum = null;
+                if (pageMatch1) {
+                    pageNum = parseInt(pageMatch1[1]);
+                } else if (pageMatch2) {
+                    pageNum = parseInt(pageMatch2[1]);
+                }
+                
+                if (pageNum && lineMatch) {
+                    // Extract only the sentence containing the keyword
+                    const sentenceMatch = content.match(/[^.!?]*<mark[^>]*>[^<]*<\/mark>[^.!?]*[.!?]/);
+                    const matchContent = sentenceMatch ? sentenceMatch[0].trim() : content;
+                    
+                    matches.push({
+                        page: pageNum,
+                        line: parseInt(lineMatch[1]),
+                        content: matchContent
+                    });
+                }
+            });
+            
+            // Sort matches by page number and line number
+            matches.sort((a, b) => {
+                if (a.page !== b.page) {
+                    return a.page - b.page;
+                }
+                return a.line - b.line;
+            });
+            
+            return matches;
+        }
+        
+        function renderMatchingLines(matches) {
+            const container = document.getElementById('matchingLinesContainer');
+            if (!matches.length) {
+                container.innerHTML = '<div class="no-matches">No matches found.</div>';
+                return;
+            }
+            
+            // Group matches by page
+            const matchesByPage = {};
+            matches.forEach(match => {
+                if (!matchesByPage[match.page]) {
+                    matchesByPage[match.page] = [];
+                }
+                matchesByPage[match.page].push(match);
+            });
+            
+            // Create HTML for each page's matches
+            let html = '';
+            Object.keys(matchesByPage).sort((a, b) => parseInt(a) - parseInt(b)).forEach(pageNum => {
+                const pageMatches = matchesByPage[pageNum];
+                html += `
+                    <div class="page-matches">
+                        <div class="page-header">Page ${pageNum}</div>
+                        ${pageMatches.map((match, idx) => `
+                            <div class="matching-line" 
+                                 data-page="${match.page}" 
+                                 data-line="${match.line}">
+                                <div class="line-info">
+                                    <span class="line-number">Line ${match.line}</span>
+                                </div>
+                                <div class="line-content">${match.content}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            });
+            
+            container.innerHTML = html;
+        }
+        
+        function updateOccurrenceInfo() {
+            const matches = getMatchingLinesFromDOM();
+            const info = document.getElementById('occurrenceInfo');
+            const searchCount = document.querySelector('.search-count');
+            
+            if (matches.length === 0) {
+                info.textContent = '0 matches';
+                searchCount.textContent = '0 matches';
+            } else {
+                info.textContent = `${currentOccurrenceIndex + 1} of ${matches.length}`;
+                searchCount.textContent = `${matches.length} match${matches.length !== 1 ? 'es' : ''}`;
+            }
+            
+            // Update navigation buttons
+            const prevMatch = document.getElementById('prevMatch');
+            const nextMatch = document.getElementById('nextMatch');
+            prevMatch.disabled = currentOccurrenceIndex === 0;
+            nextMatch.disabled = currentOccurrenceIndex === matches.length - 1;
+        }
+        
+        function scrollToActiveLine() {
+            const matches = getMatchingLinesFromDOM();
+            matches.forEach((m, idx) => {
+                m.element.classList.toggle('active', idx === currentOccurrenceIndex);
+            });
+            
+            if (matches[currentOccurrenceIndex]) {
+                matches[currentOccurrenceIndex].element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                navigateToCurrentMatch(matches[currentOccurrenceIndex]);
+            }
+            
+            updateOccurrenceInfo();
+        }
+        
+        function navigateToCurrentMatch(match) {
+            const iframe = document.getElementById('previewFrame');
+            if (!iframe.contentWindow) return;
+            
+            try {
+                // First navigate to the correct page
+                iframe.contentWindow.postMessage({
+                    type: 'goToPage',
+                    page: match.page
+                }, '*');
+                
+                // Then navigate to the line
+                setTimeout(() => {
+                    iframe.contentWindow.postMessage({
+                        type: 'goToLine',
+                        line: match.line
+                    }, '*');
+                }, 500);
+            } catch (e) {
+                console.error('Error navigating to match:', e);
+            }
+        }
+        
+        function hidePreviewSearchUI() {
+            const searchUI = document.getElementById('previewSearchUI');
+            if (searchUI) {
+                searchUI.style.display = 'none';
+                // Clear any existing highlights
+                clearSearchHighlights();
+            }
+        }
+        
+        function searchInPreview(searchTerm) {
+            const iframe = document.getElementById('previewFrame');
+            if (!iframe.contentWindow || !searchTerm) return;
+            
+            try {
+                // Clear previous highlights
+                clearSearchHighlights();
+                
+                // Reset search to start
+                iframe.contentWindow.getSelection().removeAllRanges();
+                
+                // Find all occurrences
+                let count = 0;
+                let found = iframe.contentWindow.find(searchTerm, false, false, true, false, false, false);
+                
+                while (found) {
+                    count++;
+                    const selection = iframe.contentWindow.getSelection();
+                    if (selection.rangeCount > 0) {
+                        highlightMatch(selection.getRangeAt(0));
+                    }
+                    found = iframe.contentWindow.find(searchTerm, false, false, true, false, false, false);
+                }
+                
+                // Update count display
+                const searchCount = document.querySelector('.search-count');
+                searchCount.textContent = `${count} match${count !== 1 ? 'es' : ''}`;
+                
+                // Update navigation buttons
+                const prevMatch = document.getElementById('prevMatch');
+                const nextMatch = document.getElementById('nextMatch');
+                prevMatch.disabled = count === 0;
+                nextMatch.disabled = count === 0;
+                
+                // Reset to first match
+                if (count > 0) {
+                    iframe.contentWindow.getSelection().removeAllRanges();
+                    iframe.contentWindow.find(searchTerm, false, false, true, false, false, false);
+                }
+                
+            } catch (e) {
+                console.error('Error searching in preview:', e);
+            }
+        }
+        
+        function highlightMatch(range) {
+            try {
+                const highlightSpan = document.createElement('span');
+                highlightSpan.className = 'search-highlight';
+                highlightSpan.style.backgroundColor = 'yellow';
+                highlightSpan.style.padding = '2px';
+                highlightSpan.style.borderRadius = '2px';
+                range.surroundContents(highlightSpan);
+            } catch (e) {
+                console.error('Error highlighting match:', e);
+            }
+        }
+        
+        function clearSearchHighlights() {
+            const iframe = document.getElementById('previewFrame');
+            if (!iframe.contentWindow) return;
+            
+            try {
+                const highlights = iframe.contentWindow.document.getElementsByClassName('search-highlight');
+                while (highlights.length > 0) {
+                    const parent = highlights[0].parentNode;
+                    while (highlights[0].firstChild) {
+                        parent.insertBefore(highlights[0].firstChild, highlights[0]);
+                    }
+                    parent.removeChild(highlights[0]);
+                }
+            } catch (e) {
+                console.error('Error clearing highlights:', e);
+            }
+        }
+        
+        function initializePageNavigation() {
+            const iframe = document.getElementById('previewFrame');
+            if (!iframe.contentWindow) return;
+            
+            // Get total pages from the viewer
+            totalPages = getTotalPages(iframe.contentWindow);
+            document.getElementById('totalPages').textContent = totalPages;
+            
+            // Initialize page and line inputs
+            document.getElementById('pageInput').value = currentPage;
+            document.getElementById('lineInput').value = currentLine;
+            
+            // Initialize occurrence navigation
+            initializeOccurrenceNavigation();
+            
+            // Update navigation buttons state
+            updateNavigationButtons();
+        }
+        
+        function initializeOccurrenceNavigation() {
+            const iframe = document.getElementById('previewFrame');
+            if (!iframe.contentWindow) return;
+            
+            // Get all occurrences from the document
+            occurrences = getOccurrences();
+            currentOccurrenceIndex = -1;
+            
+            // Update occurrence count display
+            updateOccurrenceInfo();
+            
+            // Add keyboard event listeners for occurrence navigation
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'ArrowUp' && !e.ctrlKey) {
+                    e.preventDefault();
+                    navigateToPreviousOccurrence();
+                } else if (e.key === 'ArrowDown' && !e.ctrlKey) {
+                    e.preventDefault();
+                    navigateToNextOccurrence();
+                }
+            });
+            
+            // If we have matches, navigate to the first one
+            if (occurrences.length > 0) {
+                currentOccurrenceIndex = 0;
+                navigateToNextOccurrence();
+            }
+        }
+        
+        function updateOccurrenceCount() {
+            const iframe = document.getElementById('previewFrame');
+            if (!iframe.contentWindow) return;
+            
+            try {
+                // Get the search term
+                const searchTerm = document.getElementById('searchInput').value.trim();
+                if (!searchTerm) return;
+                
+                // Count occurrences
+                let count = 0;
+                let found = iframe.contentWindow.find(searchTerm, false, false, true, false, false, false);
+                
+                while (found) {
+                    count++;
+                    found = iframe.contentWindow.find(searchTerm, false, false, true, false, false, false);
+                }
+                
+                // Update the occurrence count display
+                const occurrenceCount = document.getElementById('occurrenceCount');
+                occurrenceCount.textContent = `${count} match${count !== 1 ? 'es' : ''}`;
+                
+                // Update navigation buttons
+                const prevOccurrence = document.getElementById('prevOccurrence');
+                const nextOccurrence = document.getElementById('nextOccurrence');
+                prevOccurrence.disabled = count === 0;
+                nextOccurrence.disabled = count === 0;
+                
+            } catch (e) {
+                console.error('Error updating occurrence count:', e);
+            }
+        }
+        
+        function navigateToPreviousOccurrence() {
+            const iframe = document.getElementById('previewFrame');
+            if (!iframe.contentWindow) return;
+            
+            // Use browser's findPrevious
+            iframe.contentWindow.find('', true, false, true, false, false, false);
+            updateOccurrenceCount();
+        }
+        
+        function navigateToNextOccurrence() {
+            const iframe = document.getElementById('previewFrame');
+            if (!iframe.contentWindow) return;
+            
+            // Use browser's findNext
+            iframe.contentWindow.find('', false, false, true, false, false, false);
+            updateOccurrenceCount();
+        }
+        
+        function navigateToPreviousPage() {
+            if (currentPage > 1) {
+                currentPage--;
+                document.getElementById('pageInput').value = currentPage;
+                goToPage(currentPage);
+            }
+        }
+        
+        function navigateToNextPage() {
+            if (currentPage < totalPages) {
+                currentPage++;
+                document.getElementById('pageInput').value = currentPage;
+                goToPage(currentPage);
+            }
+        }
+        
+        function goToPage(page) {
+            const pageNum = parseInt(page);
+            if (pageNum >= 1 && pageNum <= totalPages) {
+                currentPage = pageNum;
+                const iframe = document.getElementById('previewFrame');
+                if (iframe.contentWindow) {
+                    try {
+                        // Try to use the Google Docs Viewer's page navigation
+                        iframe.contentWindow.postMessage({
+                            type: 'goToPage',
+                            page: pageNum
+                        }, '*');
+                    } catch (e) {
+                        console.error('Error navigating to page:', e);
+                    }
+                    updateNavigationButtons();
+                }
+            }
+        }
+        
+        function goToLine(line) {
+            const lineNum = parseInt(line);
+            if (lineNum >= 1) {
+                currentLine = lineNum;
+                const iframe = document.getElementById('previewFrame');
+                if (iframe.contentWindow) {
+                    try {
+                        // Try to use the Google Docs Viewer's line navigation
+                        iframe.contentWindow.postMessage({
+                            type: 'goToLine',
+                            line: lineNum
+                        }, '*');
+                    } catch (e) {
+                        console.error('Error navigating to line:', e);
+                    }
+                }
+            }
+        }
+        
+        function updateNavigationButtons() {
+            const prevButton = document.getElementById('prevPage');
+            const nextButton = document.getElementById('nextPage');
+            
+            prevButton.disabled = currentPage <= 1;
+            nextButton.disabled = currentPage >= totalPages;
+        }
+        
+        function zoomImage(factor) {
+            const imagePreview = document.getElementById('imagePreview');
+            currentZoom *= factor;
+            imagePreview.style.transform = `scale(${currentZoom})`;
+        }
+        
+        function resetZoom() {
+            const imagePreview = document.getElementById('imagePreview');
+            currentZoom = 1;
+            imagePreview.style.transform = 'scale(1)';
+        }
+        
+        function closePreview() {
+            const previewPanel = document.getElementById('previewPanel');
+            const overlay = document.getElementById('overlay');
+            
+            overlay.classList.remove('active');
+            previewPanel.classList.remove('active');
+            
+            // Clear iframe src and reset state
+            setTimeout(() => {
+                document.getElementById('previewFrame').src = '';
+                document.getElementById('imagePreview').src = '';
+            }, 300);
+        }
+        
+        function toggleFullscreen() {
+            const previewPanel = document.getElementById('previewPanel');
+            const fullscreenIcon = document.getElementById('fullscreenIcon');
+            
+            previewPanel.classList.toggle('fullscreen');
+            
+            if (previewPanel.classList.contains('fullscreen')) {
+                fullscreenIcon.classList.remove('fa-expand');
+                fullscreenIcon.classList.add('fa-compress');
+            } else {
+                fullscreenIcon.classList.remove('fa-compress');
+                fullscreenIcon.classList.add('fa-expand');
+            }
+        }
+        
+        // Filter handling
+        document.getElementById('clearFilters').addEventListener('click', function() {
+            document.getElementById('dateFilter').value = '';
+            document.getElementById('sizeFilter').value = '';
+            document.getElementById('fileTypeFilter').value = '';
+            document.getElementById('uploaderFilter').value = '';
+            document.getElementById('categoryFilter').value = '';
+            
+            // If we have results, display all of them
+            if (allResults.length > 0) {
+                displayResults(allResults, 1);
+            }
+        });
+        
+        // Apply filters when changed
+        document.getElementById('dateFilter').addEventListener('change', applyFilters);
+        document.getElementById('sizeFilter').addEventListener('change', applyFilters);
+        document.getElementById('fileTypeFilter').addEventListener('change', applyFilters);
+        document.getElementById('uploaderFilter').addEventListener('change', applyFilters);
+        document.getElementById('categoryFilter').addEventListener('change', applyFilters);
+        
+        function applyFilters() {
+            if (allResults.length === 0) return;
+            
+            const dateFilter = document.getElementById('dateFilter').value;
+            const sizeFilter = document.getElementById('sizeFilter').value;
+            const fileTypeFilter = document.getElementById('fileTypeFilter').value;
+            const uploaderFilter = document.getElementById('uploaderFilter').value;
+            const categoryFilter = document.getElementById('categoryFilter').value;
+            
+            let filtered = [...allResults];
+            
+            // Apply date filter
+            if (dateFilter) {
+                const now = new Date();
+                let cutoff = new Date();
+                
+                switch (dateFilter) {
+                    case 'today':
+                        cutoff.setHours(0, 0, 0, 0);
+                        break;
+                    case 'yesterday':
+                        cutoff.setDate(cutoff.getDate() - 1);
+                        cutoff.setHours(0, 0, 0, 0);
+                        break;
+                    case 'last_week':
+                        cutoff.setDate(cutoff.getDate() - 7);
+                        break;
+                    case 'last_month':
+                        cutoff.setMonth(cutoff.getMonth() - 1);
+                        break;
+                    case 'last_year':
+                        cutoff.setFullYear(cutoff.getFullYear() - 1);
+                        break;
+                }
+                
+                filtered = filtered.filter(doc => {
+                    if (!doc.last_modified) return false;
+                    const docDate = new Date(doc.last_modified);
+                    return docDate >= cutoff;
+                });
+            }
+            
+            // Apply size filter
+            if (sizeFilter) {
+                filtered = filtered.filter(doc => {
+                    if (!doc.file_size) return false;
+                    
+                    const size = parseInt(doc.file_size);
+                    switch (sizeFilter) {
+                        case 'small':
+                            return size < 1048576; // < 1MB
+                        case 'medium':
+                            return size >= 1048576 && size <= 10485760; // 1MB - 10MB
+                        case 'large':
+                            return size > 10485760; // > 10MB
+                        default:
+                            return true;
+                    }
+                });
+            }
+            
+            // Apply file type filter
+            if (fileTypeFilter) {
+                filtered = filtered.filter(doc => doc.file_type === fileTypeFilter);
+            }
+            
+            // Apply uploader filter
+            if (uploaderFilter) {
+                filtered = filtered.filter(doc => doc.uploaded_by === uploaderFilter);
+            }
+            
+            // Apply category filter
+            if (categoryFilter) {
+                filtered = filtered.filter(doc => doc.Category === categoryFilter);
+            }
+            
+            // Display filtered results
+            displayResults(filtered, 1);
+        }
+        
+        function formatMatchingLines(content) {
+            if (!content) return '<div class="no-matches">No matching content found</div>';
+            
+            const lines = content.split('\n');
+            let matches = [];
+            
+            lines.forEach(line => {
+                if (line.includes('<mark')) {
+                    // Split the line into sentences
+                    const sentences = line.split(/(?<=[.!?])\s+/);
+                    
+                    // Check each sentence for the keyword
+                    sentences.forEach(sentence => {
+                        if (sentence.includes('<mark')) {
+                            // Clean up the sentence
+                            const cleanSentence = sentence.trim();
+                            if (cleanSentence) {
+                                matches.push(cleanSentence);
+                            }
+                        }
+                    });
+                    
+                    // If no complete sentences were found, use the line itself
+                    if (matches.length === 0) {
+                        matches.push(line.trim());
+                    }
+                }
+            });
+            
+            // Remove duplicates while preserving order
+            matches = [...new Set(matches)];
+            
+            // Create HTML for matches
+            let formattedLines = '';
+            if (matches.length > 0) {
+                formattedLines = matches.map(match => `
+                    <div class="matching-line">
+                        <div class="line-content">${match}</div>
+                    </div>
+                `).join('');
+            }
+            
+            return formattedLines || '<div class="no-matches">No matching content found</div>';
+        }
+        
+        // Get all matching lines from the DOM
+        function getMatchingLinesFromDOM() {
+            const lines = Array.from(document.querySelectorAll('#matchingLinesContainer .matching-line'));
+            return lines.map((el, idx) => ({
+                element: el,
+                page: parseInt(el.getAttribute('data-page'), 10),
+                line: parseInt(el.getAttribute('data-line'), 10),
+                content: el.querySelector('.line-content').innerHTML,
+                index: idx
+            }));
+        }
+        
+        // Call this after rendering matching lines
+        function afterRenderMatchingLines() {
+            currentOccurrenceIndex = 0;
+            scrollToActiveLine();
+        }
+
+        // Function to populate dropdowns
+        function populateDropdowns() {
+            // Populate file types
+            fetch('/filetypes')
+                .then(response => response.json())
+                .then(data => {
+                    const fileTypeSelect = document.getElementById('fileTypeFilter');
+                    // Clear existing options except the first one
+                    while (fileTypeSelect.options.length > 1) {
+                        fileTypeSelect.remove(1);
+                    }
+                    // Add new options
+                    data.file_types.forEach(type => {
+                        if (type) { // Only add non-empty values
+                            const option = document.createElement('option');
+                            option.value = type;
+                            option.textContent = type.charAt(0).toUpperCase() + type.slice(1);
+                            fileTypeSelect.appendChild(option);
+                        }
+                    });
+                })
+                .catch(error => console.error('Error fetching file types:', error));
+                
+            // Populate uploaders
+            fetch('/uploaders')
+                .then(response => response.json())
+                .then(data => {
+                    const uploaderSelect = document.getElementById('uploaderFilter');
+                    // Clear existing options except the first one
+                    while (uploaderSelect.options.length > 1) {
+                        uploaderSelect.remove(1);
+                    }
+                    // Add new options
+                    data.uploaders.forEach(uploader => {
+                        if (uploader) { // Only add non-empty values
+                            const option = document.createElement('option');
+                            option.value = uploader;
+                            option.textContent = uploader;
+                            uploaderSelect.appendChild(option);
+                        }
+                    });
+                })
+                .catch(error => console.error('Error fetching uploaders:', error));
+                
+            // Populate categories
+            fetch('/categories')
+                .then(response => response.json())
+                .then(data => {
+                    const categorySelect = document.getElementById('categoryFilter');
+                    // Clear existing options except the first one
+                    while (categorySelect.options.length > 1) {
+                        categorySelect.remove(1);
+                    }
+                    // Add new options
+                    data.categories.forEach(category => {
+                        if (category) { // Only add non-empty values
+                            const option = document.createElement('option');
+                            option.value = category;
+                            option.textContent = category;
+                            categorySelect.appendChild(option);
+                        }
+                    });
+                })
+                .catch(error => console.error('Error fetching categories:', error));
+        }
+        
+        // Call the function when the page loads
+        document.addEventListener('DOMContentLoaded', populateDropdowns);
+    </script>
+</body>
+</html>
