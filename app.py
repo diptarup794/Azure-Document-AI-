@@ -56,46 +56,81 @@ def palette(i):
               "#98FB98","#ADD8E6","#FFB6C1","#EE82EE"]
     return colors[i % len(colors)]
 
-def highlight_text(text, query):
+def highlight_text(text, queries):
     if not text: return ""
-    for i, word in enumerate(query.split()):
-        text = re.sub(fr"({re.escape(word)})",
-                      rf'<mark style="background:{palette(i)};">\1</mark>',
-                      text, flags=re.I)
-    return text
+    # Ensure queries is a list
+    if not isinstance(queries, list): queries = [queries]
 
-def highlight_docx(blob_client, query):
+    highlighted_text = text
+    for i, word in enumerate(queries):
+        # Escape special regex characters in the search word
+        escaped_word = re.escape(word.strip())
+        if not escaped_word: continue # Skip empty queries
+
+        # Use word boundaries \b to match whole words if appropriate, or adjust regex
+        # for partial matches depending on desired behavior.
+        # For now, keeping the original regex structure but using the actual words.
+        highlighted_text = re.sub(fr"({escaped_word})",
+                                  rf'<mark style="background:{palette(i)};">\1</mark>',
+                                  highlighted_text, flags=re.I)
+    return highlighted_text
+
+def highlight_docx(blob_client, queries):
     try:
+        # Ensure queries is a list
+        if not isinstance(queries, list): queries = [queries]
+        queries = [q.strip() for q in queries if q.strip()] # Clean and filter empty
+        if not queries: return None
+
         doc = Document(io.BytesIO(blob_client.download_blob().readall()))
         wcol = [WD_COLOR_INDEX.YELLOW, WD_COLOR_INDEX.TURQUOISE, WD_COLOR_INDEX.PINK,
                 WD_COLOR_INDEX.GREEN, WD_COLOR_INDEX.BRIGHT_GREEN, WD_COLOR_INDEX.BLUE,
                 WD_COLOR_INDEX.RED, WD_COLOR_INDEX.VIOLET]
-        cmap = {w.lower(): wcol[i % len(wcol)] for i,w in enumerate(query.split())}
+        # Create a mapping from lowercased query words to colors
+        cmap = {w.lower(): wcol[i % len(wcol)] for i,w in enumerate(queries)}
+        
         for p in doc.paragraphs:
             for r in p.runs:
-                for w,c in cmap.items():
-                    if re.search(re.escape(w), r.text, re.I):
-                        r.font.highlight_color = c
+                # Iterate through each query word and highlight if found in the run text
+                for w_lower, c in cmap.items():
+                    # Use regex to find occurrences of the word case-insensitively
+                    # Ensure we don't highlight the <mark> tags themselves if they were somehow present
+                    if re.search(r'\b' + re.escape(w_lower) + r'\b', r.text, re.I):
+                         # This approach highlights the entire run if any part of it matches.
+                         # For more precise highlighting within a run, docx-related libraries
+                         # might be needed, which is complex. Highlighting the run is simpler
+                         # for demonstration.
+                         r.font.highlight_color = c
+
         buf = io.BytesIO(); doc.save(buf); buf.seek(0)
         return buf.getvalue()
     except Exception as e:
         app.logger.error(f"DOCX highlight error: {e}")
         return None
 
-def highlight_pdf(blob_client, query):
+def highlight_pdf(blob_client, queries):
     try:
+        # Ensure queries is a list
+        if not isinstance(queries, list): queries = [queries]
+        queries = [q.strip() for q in queries if q.strip()] # Clean and filter empty
+        if not queries: return None
+
         data = blob_client.download_blob().readall()
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
         tmp.write(data); tmp.close()
         doc = fitz.open(tmp.name)
         pcol = [(1,1,0),(0,0.8,0.8),(1,0.75,0.8),(0.56,0.93,0.56),
                 (0.6,0.98,0.6),(0.68,0.85,0.9),(1,0.71,0.76),(0.93,0.51,0.93)]
-        cmap = {w.lower(): pcol[i % len(pcol)] for i,w in enumerate(query.split())}
+        # Create a mapping from lowercased query words to colors
+        cmap = {w.lower(): pcol[i % len(pcol)] for i,w in enumerate(queries)}
+        
         for pg in doc:
-            for w,c in cmap.items():
-                for inst in pg.search_for(w, quads=True):
+            for w_lower, c in cmap.items():
+                # Use search_for with quads=True to get bounding boxes for highlighting
+                for inst in pg.search_for(w_lower, quads=True):
                     annot = pg.add_highlight_annot(inst)
                     annot.set_colors(stroke=c); annot.update()
+
         buf = io.BytesIO(); doc.save(buf); doc.close(); os.unlink(tmp.name)
         buf.seek(0); return buf.getvalue()
     except Exception as e:
@@ -180,7 +215,7 @@ def categories():
 @app.route("/search", methods=["POST"])
 @login_required
 def search():
-    q         = (request.form.get("query") or "").strip()
+    queries = request.form.getlist("queries[]")  # Get list of queries
     ftype     = request.form.get("file_type","").strip()
     fsize     = request.form.get("size","")
     drange    = request.form.get("date_range","")
@@ -188,6 +223,7 @@ def search():
     category  = request.form.get("category","").strip()
 
     # Debug logging
+    app.logger.debug(f"Received queries: {queries}")
     app.logger.debug(f"Received uploader filter value: {uploader}")
     app.logger.debug(f"Received category filter value: {category}")
 
@@ -218,20 +254,25 @@ def search():
     # Debug logging
     app.logger.debug(f"Final filter string: {' and '.join(flist)}")
 
+    # Build search query with OR conditions
+    search_query = " OR ".join([f"({q})" for q in queries if q.strip()]) if queries else "*"
+
     payload = {
-        "search"      : "*" if not q else q,
+        "search"      : search_query,
         "searchFields": "content,metadata_storage_name",
         "select"      : "content,metadata_storage_name,metadata_storage_path,file_type,file_size,last_modified,uploaded_by,Category",
         "filter"      : " and ".join(flist),
         "top"         : 50,
         "queryType"   : "full",
-        "searchMode"  : "all"
+        "searchMode"  : "any"  # Changed from "all" to "any" to match OR condition
     }
 
     try:
         hdrs={"api-key":API_KEY,"Content-Type":"application/json"}
         # Debug logging
         app.logger.debug(f"Search payload: {payload}")
+        # Debug logging
+        app.logger.debug(f"Sending search query to Azure: {search_query}")
         response = requests.post(AZURE_ENDPOINT, headers=hdrs, json=payload).json()
         docs = response.get("value", [])
         # Debug logging
@@ -244,13 +285,16 @@ def search():
             url=sas_url(blob)
             # Highlight if PDF / DOCX
             if ext in ("doc","docx"):
-                if (hd:=highlight_docx(client,q)): 
+                # Pass the original list of queries for highlighting
+                if (hd:=highlight_docx(client,queries)): 
                     temp=f"highlighted_{blob}";container_client.upload_blob(temp,hd,overwrite=True);url=sas_url(temp)
             elif ext=="pdf":
-                if (hp:=highlight_pdf(client,q)):
+                # Pass the original list of queries for highlighting
+                if (hp:=highlight_pdf(client,queries)):
                     temp=f"highlighted_{blob}";container_client.upload_blob(temp,hp,overwrite=True);url=sas_url(temp)
             d["view_url"]=url
-            d["highlighted_content"]=highlight_text(d.get("content",""),q)
+            # Pass the original list of queries for highlighting
+            d["highlighted_content"]=highlight_text(d.get("content",""),queries)
         return jsonify({"results":docs})
     except Exception as e:
         app.logger.error(f"Search failure: {e}")

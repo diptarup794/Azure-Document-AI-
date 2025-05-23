@@ -655,6 +655,48 @@
             padding: 2px 0;
             border-radius: 2px;
         }
+
+        /* Custom Tooltip Style */
+        .custom-tooltip {
+            position: absolute;
+            background-color: #333; /* Dark background */
+            color: #fff; /* White text */
+            padding: 10px 15px; /* Increased padding for bigger size */
+            border-radius: 6px; /* Slightly larger border radius */
+            font-size: 16px; /* Bigger font size */
+            z-index: 1002; /* Ensure it's above other content */
+            pointer-events: none; /* Allow clicks to pass through to elements below */
+            opacity: 0;
+            transition: opacity 0.2s ease-in-out; /* Smooth fade transition */
+            white-space: nowrap; /* Prevent text wrapping */
+            box-shadow: 0 4px 8px rgba(0,0,0,0.4); /* More pronounced shadow */
+             transform: translateX(-50%); /* Center tooltip based on its own width */
+        }
+
+         /* Arrow pointing down when tooltip is above */
+        .custom-tooltip.tooltip-above::after {
+            content: '';
+            position: absolute;
+            top: 100%; /* Position at the bottom of the tooltip */
+            left: 50%; /* Position relative to the tooltip's horizontal center */
+            transform: translateX(-50%); /* Center the arrow itself */
+            border-width: 5px;
+            border-style: solid;
+            border-color: #2563eb transparent transparent transparent; /* Blue arrow pointing down */
+        }
+
+         /* Arrow pointing up when tooltip is below */
+        .custom-tooltip.tooltip-below::before {
+            content: '';
+            position: absolute;
+            top: -5px; /* Position above the tooltip */
+            left: 50%; /* Position relative to the tooltip's horizontal center */
+            transform: translateX(-50%); /* Center the arrow itself */
+            border-width: 5px;
+            border-style: solid;
+            border-color: transparent transparent #2563eb transparent; /* Blue arrow pointing up */
+        }
+
     </style>
 </head>
 <body>
@@ -669,14 +711,28 @@
         </div>
 
         <form id="searchForm" class="mb-8">
-            <div class="flex flex-col md:flex-row gap-4">
+            <!-- Initial Search Input and Add Button -->
+            <div class="flex gap-2 items-center">
                 <div class="flex-grow relative">
                     <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                         <i class="fas fa-search text-gray-400"></i>
                     </div>
-                    <input type="text" id="searchInput" class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="Search for keywords in your documents...">
+                    <input type="text" name="queries[]" class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="Search for keywords in your documents...">
                 </div>
-                <button type="submit" class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2">
+                <!-- Initial Add Query Button with custom tooltip -->
+                <button type="button" id="addQuery" class="text-blue-600 hover:text-blue-800 p-2 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500" data-tooltip-text="For searching on multiple keywords click on this">
+                    <i class="fas fa-plus"></i>
+                </button>
+            </div>
+            
+            <!-- Container for dynamically added query fields and OR labels -->
+            <div id="dynamicQueryContainer" class="flex flex-col gap-4 mt-4">
+                <!-- Dynamic query fields will be added here by JavaScript -->
+            </div>
+            
+            <!-- Search Button - Moved below query inputs -->
+            <div class="mt-4">
+                <button type="submit" class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 w-full">
                     <i class="fas fa-search"></i>
                     Search
                 </button>
@@ -846,8 +902,8 @@
         document.getElementById('searchForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             
-            const query = document.getElementById('searchInput').value.trim();
-            if (!query) return;
+            const queries = Array.from(document.getElementsByName('queries[]')).map(input => input.value.trim()).filter(q => q);
+            if (queries.length === 0) return;
             
             const resultsDiv = document.getElementById('results');
             const loading = document.getElementById('loading');
@@ -856,7 +912,7 @@
             loading.classList.remove('hidden');
             
             const formData = new FormData();
-            formData.append('query', query);
+            queries.forEach(query => formData.append('queries[]', query));
             formData.append('file_type', document.getElementById('fileTypeFilter').value);
             formData.append('size', document.getElementById('sizeFilter').value);
             formData.append('date_range', document.getElementById('dateFilter').value);
@@ -1943,6 +1999,241 @@
         
         // Call the function when the page loads
         document.addEventListener('DOMContentLoaded', populateDropdowns);
+
+        // Add query field functionality
+        document.getElementById('addQuery').addEventListener('click', addQueryField);
+
+        // Function to add a new query field
+        function addQueryField() {
+            const container = document.getElementById('dynamicQueryContainer');
+            // Count existing dynamic query field groups (each group contains an OR label and an input)
+            const currentDynamicQueries = container.querySelectorAll('.dynamic-query-group');
+            const totalQueryInputs = document.querySelectorAll('input[name="queries[]"]').length;
+            
+            // Limit to a total of 5 query inputs
+            if (totalQueryInputs >= 5) {
+                console.log("Maximum 5 queries allowed.");
+                document.getElementById('addQuery').disabled = true; // Disable the initial add button
+                return;
+            }
+
+            const queryGroupDiv = document.createElement('div');
+            queryGroupDiv.className = 'dynamic-query-group flex flex-col gap-2'; // Class for the group
+            queryGroupDiv.innerHTML = `
+                <!-- OR Label -->
+                <div class="text-center text-sm text-gray-600 font-semibold">OR</div>
+                <!-- Input and Buttons -->
+                <div class="flex gap-2 items-center">
+                    <div class="flex-grow relative">
+                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <i class="fas fa-search text-gray-400"></i>
+                        </div>
+                        <input type="text" name="queries[]" class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="Search for keywords in your documents...">
+                    </div>
+                    <!-- Add Query Button (on dynamic fields) with custom tooltip -->
+                    <button type="button" class="add-query-btn text-blue-600 hover:text-blue-800 p-2 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500" data-tooltip-text="For searching on multiple keywords click on this">
+                        <i class="fas fa-plus"></i>
+                    </button>
+                     <!-- Remove Query Button -->
+                    <button type="button" class="remove-query-btn text-blue-600 hover:text-blue-800 p-2 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <i class="fas fa-minus"></i>
+                    </button>
+                </div>
+            `;
+            container.appendChild(queryGroupDiv);
+
+            // Attach event listeners to the new buttons
+            queryGroupDiv.querySelector('.add-query-btn').addEventListener('click', addQueryField);
+            queryGroupDiv.querySelector('.remove-query-btn').addEventListener('click', function() {
+                container.removeChild(queryGroupDiv);
+                 // Re-enable the initial add button if we are below the limit
+                 if (document.querySelectorAll('input[name="queries[]"]').length < 5) {
+                     document.getElementById('addQuery').disabled = false;
+                 }
+                  // Re-initialize tooltips after removing an element
+                 initializeTooltips();
+            });
+
+             // Disable the initial add button if we've reached the limit after adding
+            if (document.querySelectorAll('input[name="queries[]"]').length >= 5) {
+                 document.getElementById('addQuery').disabled = true;
+            }
+
+            // Initialize tooltips for the newly added button
+            initializeTooltips();
+        }
+
+        // Initial setup: Ensure the first query field has the '+' button and add listener
+        document.addEventListener('DOMContentLoaded', function(){
+            populateDropdowns();
+            // The initial query field already exists in HTML with the '+' button and id='addQuery'
+            // Its event listener is set up above.
+             // Also check initial state if page is loaded with pre-filled queries (less common scenario)
+            if (document.querySelectorAll('input[name="queries[]"]').length >= 5) {
+                 document.getElementById('addQuery').disabled = true;
+            }
+            // Initialize tooltips on page load
+            initializeTooltips();
+        });
+
+        // Function to initialize tooltips
+        function initializeTooltips() {
+            const tooltip = document.getElementById('customTooltip');
+            const buttons = document.querySelectorAll('#addQuery, .add-query-btn');
+
+            buttons.forEach(button => {
+                // Use a data attribute to mark buttons that already have listeners
+                if (button.getAttribute('data-tooltip-initialized')) {
+                    return; // Skip if already initialized
+                }
+
+                button.addEventListener('mouseover', function() {
+                    const text = this.getAttribute('data-tooltip-text');
+                    if (text) {
+                        tooltip.textContent = text;
+                        // Make tooltip visible briefly to calculate dimensions
+                         tooltip.style.opacity = '1';
+                         tooltip.style.visibility = 'visible';
+
+                        const rect = this.getBoundingClientRect();
+                        const tooltipRect = tooltip.getBoundingClientRect();
+
+                         // Remove previous position classes
+                        tooltip.classList.remove('tooltip-above', 'tooltip-below');
+
+                        // Calculate target position above the button
+                        let targetTop = rect.top - tooltipRect.height - 8; // 8px above the button
+                        let targetLeft = rect.left + rect.width / 2; // Center horizontally relative to button
+
+                        let positionedBelow = false;
+
+                         // If positioning above makes it go off screen top, position below instead
+                         if (targetTop < 0) {
+                              targetTop = rect.bottom + 8; // Position below the button
+                              positionedBelow = true;
+                         }
+
+                         // Adjust position to keep tooltip on screen (horizontal)
+                         if (targetLeft - tooltipRect.width / 2 < 0) { // If left edge goes off screen left
+                             targetLeft = tooltipRect.width / 2; // Align left edge with screen left
+                         }
+                         if (targetLeft + tooltipRect.width / 2 > window.innerWidth) { // If right edge goes off screen right
+                             targetLeft = window.innerWidth - tooltipRect.width / 2; // Align right edge with screen right
+                         }
+
+                         // Apply calculated position and add class for arrow direction
+                        tooltip.style.top = `${targetTop}px`;
+                        tooltip.style.left = `${targetLeft}px`;
+
+                        if (positionedBelow) {
+                            tooltip.classList.add('tooltip-below');
+                        } else {
+                            tooltip.classList.add('tooltip-above');
+                        }
+
+                        // Ensure opacity transition
+                        tooltip.style.opacity = '1';
+                        tooltip.style.visibility = 'visible'; // Ensure visibility for the transition
+                    }
+                });
+
+                button.addEventListener('mouseout', function() {
+                    tooltip.style.opacity = '0';
+                     // Hide completely after transition
+                    setTimeout(() => {
+                         tooltip.style.visibility = 'hidden';
+                         // Clean up position classes after hiding
+                         tooltip.classList.remove('tooltip-above', 'tooltip-below');
+                    }, 200); // Match transition duration
+                });
+
+                 // Handle tooltip hiding on scroll to prevent awkward positioning
+                window.addEventListener('scroll', function() {
+                     if (tooltip.style.visibility === 'visible') { // Check visibility, not just opacity
+                         tooltip.style.opacity = '0';
+                         setTimeout(() => {
+                              tooltip.style.visibility = 'hidden';
+                              // Clean up position classes after hiding
+                              tooltip.classList.remove('tooltip-above', 'tooltip-below');
+                         }, 200);
+                     }
+                 });
+
+                 // Mark button as initialized
+                button.setAttribute('data-tooltip-initialized', 'true');
+            });
+        }
+
+        document.getElementById('searchForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const queries = Array.from(document.getElementsByName('queries[]')).map(input => input.value.trim()).filter(q => q);
+            if (queries.length === 0) return;
+            
+            const resultsDiv = document.getElementById('results');
+            const loading = document.getElementById('loading');
+            
+            resultsDiv.innerHTML = '';
+            loading.classList.remove('hidden');
+            
+            const formData = new FormData();
+            queries.forEach(query => formData.append('queries[]', query));
+            formData.append('file_type', document.getElementById('fileTypeFilter').value);
+            formData.append('size', document.getElementById('sizeFilter').value);
+            formData.append('date_range', document.getElementById('dateFilter').value);
+            formData.append('uploaded_by', document.getElementById('uploaderFilter').value);
+            formData.append('category', document.getElementById('categoryFilter').value);
+            
+            try {
+                const response = await fetch('/search', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                if (data.results.length === 0) {
+                    resultsDiv.innerHTML = `
+                        <div class="bg-yellow-50 border-l-4 border-yellow-400 p-6 rounded-lg">
+                            <div class="flex items-center">
+                                <i class="fas fa-exclamation-circle text-yellow-400 text-xl mr-3"></i>
+                                <p class="text-yellow-700">No results found. Try different keywords or filters.</p>
+                            </div>
+                        </div>
+                    `;
+                    document.getElementById('docCount').textContent = 'No documents found';
+                    document.getElementById('pagination').innerHTML = '';
+                    return;
+                }
+                
+                // Store all results for filtering
+                allResults = data.results;
+                
+                // Display all results initially (page 1)
+                displayResults(allResults, 1);
+                
+            } catch (error) {
+                resultsDiv.innerHTML = `
+                    <div class="bg-red-50 border-l-4 border-red-400 p-6 rounded-lg">
+                        <div class="flex items-center">
+                            <i class="fas fa-exclamation-circle text-red-400 text-xl mr-3"></i>
+                            <p class="text-red-700">Error: ${error.message}</p>
+                        </div>
+                    </div>
+                `;
+                document.getElementById('docCount').textContent = '';
+                document.getElementById('pagination').innerHTML = '';
+            } finally {
+                loading.classList.add('hidden');
+            }
+        });
     </script>
+
+    <!-- Custom Tooltip Element -->
+    <div id="customTooltip" class="custom-tooltip" style="visibility: hidden;"></div> <!-- Added hidden by default -->
 </body>
 </html>
